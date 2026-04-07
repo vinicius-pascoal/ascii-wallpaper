@@ -9,41 +9,6 @@
 <body>
   <canvas id="scene"></canvas>
 
-  <div class="hud">
-    <h1>ASCII Particle Morph</h1>
-    <p>
-      Cole o ASCII no campo abaixo ou carregue um <strong>.txt</strong>.
-      O sistema usa <code>@%#*+=-:.</code> como densidade e anima partículas formando o desenho.
-    </p>
-
-    <div class="row">
-      <input type="file" id="fileInput" accept=".txt,text/plain" />
-    </div>
-
-    <textarea id="asciiInput" spellcheck="false" placeholder="Cole aqui o conteúdo do seu ASCII..."></textarea>
-
-    <div class="row">
-      <button id="renderBtn">Renderizar ASCII</button>
-      <button id="demoBtn">Carregar exemplo</button>
-      <button id="scatterBtn">Espalhar</button>
-    </div>
-
-    <div class="range-wrap">
-      <label for="particleRange">Máx. partículas renderizadas</label>
-      <div class="pill" id="particleCountLabel">18000</div>
-      <input id="particleRange" type="range" min="3000" max="40000" step="1000" value="18000" />
-    </div>
-
-    <div class="status" id="status">
-      Aguardando ASCII...
-    </div>
-
-    <div class="hint">
-      Dica: para grades muito grandes, como 300x300, use algo entre 12000 e 25000 partículas.
-      Pressione <strong>Ctrl + Enter</strong> no textarea para renderizar.
-    </div>
-  </div>
-
   <script src="script.js"></script>
 </body>
 </html>

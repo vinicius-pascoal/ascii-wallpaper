@@ -1,27 +1,25 @@
 const palette = "@%#*+=-:.";
 const densityMap = {
-  "@": 1.00,
+  "@": 1.0,
   "%": 0.92,
   "#": 0.84,
   "*": 0.72,
   "+": 0.58,
   "=": 0.46,
   "-": 0.32,
-  ":": 0.20,
+  ":": 0.2,
   ".": 0.12
+};
+
+const SETTINGS = {
+  asciiDir: "asciis",
+  maxParticles: 18000,
+  rotateIntervalMs: 10000,
+  rescanIntervalMs: 15000
 };
 
 const canvas = document.getElementById("scene");
 const ctx = canvas.getContext("2d");
-
-const fileInput = document.getElementById("fileInput");
-const asciiInput = document.getElementById("asciiInput");
-const renderBtn = document.getElementById("renderBtn");
-const demoBtn = document.getElementById("demoBtn");
-const scatterBtn = document.getElementById("scatterBtn");
-const particleRange = document.getElementById("particleRange");
-const particleCountLabel = document.getElementById("particleCountLabel");
-const statusEl = document.getElementById("status");
 
 const state = {
   width: window.innerWidth,
@@ -30,19 +28,17 @@ const state = {
   rawText: "",
   lines: [],
   particles: [],
-  maxParticles: Number(particleRange.value),
+  maxParticles: SETTINGS.maxParticles,
   mouse: {
     x: 0,
     y: 0,
     active: false
   },
-  lastMeta: {
-    rows: 0,
-    cols: 0,
-    visible: 0,
-    rendered: 0,
-    sampled: false
-  }
+  asciiFiles: [],
+  currentAsciiIndex: -1,
+  loadingList: false,
+  loadingAscii: false,
+  scanningEnabled: true
 };
 
 function resizeCanvas() {
@@ -83,6 +79,7 @@ function randomSpawn() {
   if (side === 2) {
     return { x: Math.random() * state.width, y: state.height + 20 + Math.random() * 120 };
   }
+
   return { x: -20 - Math.random() * 120, y: Math.random() * state.height };
 }
 
@@ -133,22 +130,14 @@ function setAscii(text) {
 function buildTargets() {
   if (!state.lines.length) {
     state.particles.length = 0;
-    state.lastMeta = {
-      rows: 0,
-      cols: 0,
-      visible: 0,
-      rendered: 0,
-      sampled: false
-    };
-    updateStatus();
     return;
   }
 
   const rows = state.lines.length;
-  const cols = Math.max(...state.lines.map(line => line.length), 1);
+  const cols = Math.max(...state.lines.map((line) => line.length), 1);
 
   const areaW = state.width * 0.88;
-  const areaH = state.height * 0.80;
+  const areaH = state.height * 0.8;
   const cell = Math.min(areaW / cols, areaH / rows);
 
   const startX = (state.width - cols * cell) / 2 + cell * 0.5;
@@ -178,9 +167,7 @@ function buildTargets() {
       if (ch === " ") continue;
 
       const weight = densityMap[ch] ?? 0.5;
-      const chance = sampled
-        ? Math.min(1, baseChance * (0.38 + weight * 1.45))
-        : 1;
+      const chance = sampled ? Math.min(1, baseChance * (0.38 + weight * 1.45)) : 1;
 
       if (sampled && stableNoise(x + 13, y + 7) > chance) {
         continue;
@@ -200,36 +187,6 @@ function buildTargets() {
   }
 
   morphParticles(targets);
-
-  state.lastMeta = {
-    rows,
-    cols,
-    visible: visibleCount,
-    rendered: targets.length,
-    sampled
-  };
-
-  updateStatus();
-}
-
-function updateStatus() {
-  const meta = state.lastMeta;
-  statusEl.innerHTML = `
-    Grade: <strong>${meta.cols} x ${meta.rows}</strong><br>
-    Pontos visíveis no ASCII: <strong>${meta.visible.toLocaleString("pt-BR")}</strong><br>
-    Partículas renderizadas: <strong>${meta.rendered.toLocaleString("pt-BR")}</strong><br>
-    Amostragem ativa: <strong>${meta.sampled ? "sim" : "não"}</strong>
-  `;
-}
-
-function scatterParticles() {
-  for (const p of state.particles) {
-    const spawn = randomSpawn();
-    p.x = spawn.x;
-    p.y = spawn.y;
-    p.vx = (Math.random() - 0.5) * 8;
-    p.vy = (Math.random() - 0.5) * 8;
-  }
 }
 
 function animate() {
@@ -271,12 +228,7 @@ function animate() {
     p.alpha += (p.targetAlpha - p.alpha) * 0.06;
 
     ctx.globalAlpha = p.alpha;
-    ctx.fillRect(
-      p.x - p.size * 0.5,
-      p.y - p.size * 0.5,
-      p.size,
-      p.size
-    );
+    ctx.fillRect(p.x - p.size * 0.5, p.y - p.size * 0.5, p.size, p.size);
   }
 
   ctx.globalAlpha = 1;
@@ -313,8 +265,8 @@ function generateTextAscii(text = "ASCII", cols = 180, rows = 60) {
     let line = "";
 
     for (let x = 0; x < cols; x++) {
-      const px = Math.floor((x + 0.5) / cols * off.width);
-      const py = Math.floor((y + 0.5) / rows * off.height);
+      const px = Math.floor(((x + 0.5) / cols) * off.width);
+      const py = Math.floor(((y + 0.5) / rows) * off.height);
       const idx = (py * off.width + px) * 4;
       const brightness = image[idx];
 
@@ -326,10 +278,7 @@ function generateTextAscii(text = "ASCII", cols = 180, rows = 60) {
       const normalized = brightness / 255;
       const paletteIndex = Math.max(
         0,
-        Math.min(
-          palette.length - 1,
-          Math.floor((1 - normalized) * (palette.length - 1))
-        )
+        Math.min(palette.length - 1, Math.floor((1 - normalized) * (palette.length - 1)))
       );
 
       line += palette[paletteIndex];
@@ -341,44 +290,160 @@ function generateTextAscii(text = "ASCII", cols = 180, rows = 60) {
   return lines.join("\n");
 }
 
-fileInput.addEventListener("change", (event) => {
-  const file = event.target.files?.[0];
-  if (!file) return;
-
-  const reader = new FileReader();
-  reader.onload = () => {
-    const content = String(reader.result || "");
-    asciiInput.value = content;
-    setAscii(content);
-  };
-  reader.readAsText(file, "utf-8");
-});
-
-renderBtn.addEventListener("click", () => {
-  setAscii(asciiInput.value);
-});
-
-demoBtn.addEventListener("click", () => {
-  const demo = generateTextAscii("ASCII", 180, 60);
-  asciiInput.value = demo;
-  setAscii(demo);
-});
-
-scatterBtn.addEventListener("click", () => {
-  scatterParticles();
-});
-
-asciiInput.addEventListener("keydown", (event) => {
-  if (event.ctrlKey && event.key === "Enter") {
-    setAscii(asciiInput.value);
+function normalizeAsciiPath(path) {
+  if (!path) return "";
+  const clean = path.trim().replace(/^\.\//, "");
+  if (clean.startsWith(`${SETTINGS.asciiDir}/`)) {
+    return clean;
   }
-});
+  return `${SETTINGS.asciiDir}/${clean}`;
+}
 
-particleRange.addEventListener("input", () => {
-  state.maxParticles = Number(particleRange.value);
-  particleCountLabel.textContent = particleRange.value;
-  buildTargets();
-});
+async function fetchAsciiListFromJson() {
+  const response = await fetch(`${SETTINGS.asciiDir}/index.json`, { cache: "no-store" });
+  if (!response.ok) {
+    return [];
+  }
+
+  const data = await response.json();
+  if (!Array.isArray(data)) {
+    return [];
+  }
+
+  return data
+    .filter((item) => typeof item === "string" && item.toLowerCase().endsWith(".txt"))
+    .map(normalizeAsciiPath);
+}
+
+async function fetchAsciiListFromDirectory() {
+  const response = await fetch(`${SETTINGS.asciiDir}/`, { cache: "no-store" });
+  if (!response.ok) {
+    return [];
+  }
+
+  const html = await response.text();
+  const links = [];
+  const regex = /href=["']([^"']+\.txt)["']/gi;
+  let match = regex.exec(html);
+
+  while (match) {
+    links.push(normalizeAsciiPath(decodeURIComponent(match[1])));
+    match = regex.exec(html);
+  }
+
+  return links;
+}
+
+function uniqueSorted(items) {
+  return [...new Set(items)].sort((a, b) => a.localeCompare(b));
+}
+
+function sameList(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+async function refreshAsciiList() {
+  if (state.loadingList || !state.scanningEnabled) {
+    return;
+  }
+
+  state.loadingList = true;
+
+  try {
+    let files = await fetchAsciiListFromJson();
+
+    if (!files.length) {
+      files = await fetchAsciiListFromDirectory();
+    }
+
+    files = uniqueSorted(files);
+
+    if (!files.length) {
+      return;
+    }
+
+    const previousCurrent = state.asciiFiles[state.currentAsciiIndex] || null;
+
+    if (!sameList(state.asciiFiles, files)) {
+      state.asciiFiles = files;
+
+      if (previousCurrent) {
+        const foundIndex = state.asciiFiles.indexOf(previousCurrent);
+        state.currentAsciiIndex = foundIndex;
+      }
+
+      if (state.currentAsciiIndex < 0 || state.currentAsciiIndex >= state.asciiFiles.length) {
+        state.currentAsciiIndex = 0;
+      }
+    }
+  } catch {
+    state.scanningEnabled = false;
+  } finally {
+    state.loadingList = false;
+  }
+}
+
+async function loadAsciiFromPath(path) {
+  if (state.loadingAscii) {
+    return false;
+  }
+
+  state.loadingAscii = true;
+
+  try {
+    const response = await fetch(path, { cache: "no-store" });
+    if (!response.ok) {
+      return false;
+    }
+
+    const text = await response.text();
+    setAscii(text);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    state.loadingAscii = false;
+  }
+}
+
+async function showCurrentAscii() {
+  if (!state.asciiFiles.length) {
+    return false;
+  }
+
+  const currentPath = state.asciiFiles[state.currentAsciiIndex];
+  return loadAsciiFromPath(currentPath);
+}
+
+async function rotateAscii() {
+  await refreshAsciiList();
+
+  if (!state.asciiFiles.length) {
+    return false;
+  }
+
+  state.currentAsciiIndex = (state.currentAsciiIndex + 1) % state.asciiFiles.length;
+  return showCurrentAscii();
+}
+
+async function bootstrapAsciiSource() {
+  await refreshAsciiList();
+
+  if (state.asciiFiles.length) {
+    state.currentAsciiIndex = 0;
+    const loaded = await showCurrentAscii();
+    if (loaded) {
+      return;
+    }
+  }
+
+  const fallback = generateTextAscii("ASCII", 180, 60);
+  setAscii(fallback);
+}
 
 canvas.addEventListener("mousemove", (event) => {
   state.mouse.x = event.clientX;
@@ -390,12 +455,16 @@ canvas.addEventListener("mouseleave", () => {
   state.mouse.active = false;
 });
 
-canvas.addEventListener("touchmove", (event) => {
-  if (!event.touches[0]) return;
-  state.mouse.x = event.touches[0].clientX;
-  state.mouse.y = event.touches[0].clientY;
-  state.mouse.active = true;
-}, { passive: true });
+canvas.addEventListener(
+  "touchmove",
+  (event) => {
+    if (!event.touches[0]) return;
+    state.mouse.x = event.touches[0].clientX;
+    state.mouse.y = event.touches[0].clientY;
+    state.mouse.active = true;
+  },
+  { passive: true }
+);
 
 canvas.addEventListener("touchend", () => {
   state.mouse.active = false;
@@ -403,11 +472,15 @@ canvas.addEventListener("touchend", () => {
 
 window.addEventListener("resize", resizeCanvas);
 
-particleCountLabel.textContent = particleRange.value;
 resizeCanvas();
+bootstrapAsciiSource();
 
-const initialDemo = generateTextAscii("ASCII", 180, 60);
-asciiInput.value = initialDemo;
-setAscii(initialDemo);
+setInterval(() => {
+  refreshAsciiList();
+}, SETTINGS.rescanIntervalMs);
+
+setInterval(() => {
+  rotateAscii();
+}, SETTINGS.rotateIntervalMs);
 
 animate();
