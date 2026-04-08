@@ -14,8 +14,12 @@ const densityMap = {
 const SETTINGS = {
   asciiDir: "asciis",
   maxParticles: 18000,
-  rotateIntervalMs: 10000,
-  rescanIntervalMs: 15000
+  rotateIntervalMs: 1000000,
+  rescanIntervalMs: 15000,
+  asciiTransitionMs: 1600,
+  windStrength: 0.035,
+  windSpeed: 0.42,
+  windScale: 0.003
 };
 
 const canvas = document.getElementById("scene");
@@ -38,7 +42,8 @@ const state = {
   currentAsciiIndex: -1,
   loadingList: false,
   loadingAscii: false,
-  scanningEnabled: true
+  scanningEnabled: true,
+  transitionUntil: 0
 };
 
 function resizeCanvas() {
@@ -125,6 +130,11 @@ function setAscii(text) {
   state.rawText = normalized;
   state.lines = normalized ? normalized.split("\n") : [];
   buildTargets();
+  state.transitionUntil = performance.now() + SETTINGS.asciiTransitionMs;
+}
+
+function isAsciiTransitionActive() {
+  return performance.now() < state.transitionUntil;
 }
 
 function buildTargets() {
@@ -190,6 +200,7 @@ function buildTargets() {
 }
 
 function animate() {
+  const time = performance.now() * 0.001;
   ctx.clearRect(0, 0, state.width, state.height);
   ctx.fillStyle = "rgba(3, 7, 14, 0.30)";
   ctx.fillRect(0, 0, state.width, state.height);
@@ -205,6 +216,14 @@ function animate() {
 
     let ax = (p.tx - p.x) * 0.018;
     let ay = (p.ty - p.y) * 0.018;
+
+    if (!isAsciiTransitionActive()) {
+      const windPhase = time * SETTINGS.windSpeed;
+      const swayX = Math.sin(windPhase + p.y * SETTINGS.windScale * 3.0) * SETTINGS.windStrength;
+      const swayY = Math.cos(windPhase * 0.75 + p.x * SETTINGS.windScale * 2.2) * SETTINGS.windStrength * 0.28;
+      ax += swayX;
+      ay += swayY;
+    }
 
     if (mouse.active) {
       const dx = p.x - mouse.x;

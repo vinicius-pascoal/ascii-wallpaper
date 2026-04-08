@@ -163,7 +163,7 @@ Este projeto está disponível para uso livre.
 
 - [ ] Cache de targets para ASCIIs (menos recálculo)
 - [ ] Playlist sem repetição automática
-- [ ] Efeito de vento suave quando estático
+- [x] Efeito de vento suave fora das transições
 - [ ] Sincronização com áudio
 - [ ] Manifest com duração customizada por arquivo
 
