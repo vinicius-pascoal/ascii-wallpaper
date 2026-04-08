@@ -9,6 +9,7 @@ Um wallpaper animado que transforma arte ASCII em partículas fluidas, alternand
 - **Rotação automática**: Alterna entre ASCIIs a intervalos regulares
 - **Detecção dinâmica**: Reconhece automaticamente novos arquivos na pasta `asciis/`
 - **Interatividade**: Mouse afasta partículas próximas (opcional com toque)
+- **Sincronização com áudio**: Microfone faz as partículas vibrarem e perderem forma em volumes mais altos
 - **Sem UI**: Interface limpa pura, apenas na plataforma de exibição
 - **Responsivo**: Adapta-se automaticamente ao tamanho da tela
 
@@ -119,6 +120,14 @@ ascii-wallpaper/
 - **Toque**: Funciona em dispositivos móveis
 - **Sem controles UI**: Wallpaper puro e limpo
 
+## 🔊 Sincronização com áudio
+
+- O efeito usa o microfone do navegador via Web Audio API
+- A permissão de áudio é solicitada na primeira interação do usuário com a página
+- Em sons leves, as partículas só tremem e ondulam levemente
+- Em sons fortes, a coesão diminui e a forma ASCII pode se desfazer parcialmente
+- Se o navegador não permitir acesso ao microfone, o wallpaper continua funcionando sem áudio
+
 ## 🔧 Técnicos
 
 ### Densidade de caracteres
@@ -164,7 +173,7 @@ Este projeto está disponível para uso livre.
 - [ ] Cache de targets para ASCIIs (menos recálculo)
 - [ ] Playlist sem repetição automática
 - [x] Efeito de vento suave fora das transições
-- [ ] Sincronização com áudio
+- [x] Sincronização com áudio
 - [ ] Manifest com duração customizada por arquivo
 
 ## 👥 Contribuições

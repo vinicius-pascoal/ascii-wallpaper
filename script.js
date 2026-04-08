@@ -19,7 +19,16 @@ const SETTINGS = {
   asciiTransitionMs: 1600,
   windStrength: 0.035,
   windSpeed: 0.42,
-  windScale: 0.003
+  windScale: 0.003,
+  audioEnabled: true,
+  audioRequestOnFirstGesture: true,
+  audioFftSize: 256,
+  audioSmoothing: 0.82,
+  audioBeatThreshold: 0.24,
+  audioBeatCooldownMs: 220,
+  audioMaxJitter: 22,
+  audioShapeLoss: 0.72,
+  audioRepelStrength: 0.32
 };
 
 const canvas = document.getElementById("scene");
@@ -43,8 +52,38 @@ const state = {
   loadingList: false,
   loadingAscii: false,
   scanningEnabled: true,
-  transitionUntil: 0
+  transitionUntil: 0,
+  audio: {
+    enabled: SETTINGS.audioEnabled,
+    ready: false,
+    active: false,
+    mode: "none",
+    level: 0,
+    bass: 0,
+    mid: 0,
+    treble: 0,
+    beat: 0,
+    lastBeatAt: 0,
+    analyser: null,
+    data: null,
+    context: null,
+    stream: null,
+    source: null
+  }
 };
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function easeOutCubic(value) {
+  const clamped = clamp(value, 0, 1);
+  return 1 - Math.pow(1 - clamped, 3);
+}
+
+function mix(a, b, amount) {
+  return a + (b - a) * amount;
+}
 
 function resizeCanvas() {
   state.width = window.innerWidth;
@@ -69,6 +108,11 @@ function normalizeText(text) {
 
 function stableNoise(x, y) {
   const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453123;
+  return n - Math.floor(n);
+}
+
+function stableNoise3(x, y, z) {
+  const n = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453123;
   return n - Math.floor(n);
 }
 
@@ -102,6 +146,166 @@ function createParticle(target) {
     alpha: 0,
     targetAlpha: target.alpha
   };
+}
+
+function updateAudioMetrics() {
+  const audio = state.audio;
+
+  if (!audio.active || !audio.data) {
+    audio.level += (0 - audio.level) * 0.04;
+    audio.bass += (0 - audio.bass) * 0.04;
+    audio.mid += (0 - audio.mid) * 0.04;
+    audio.treble += (0 - audio.treble) * 0.04;
+    audio.beat += (0 - audio.beat) * 0.08;
+    return;
+  }
+
+  let normalized = audio.data;
+
+  if (audio.analyser) {
+    audio.analyser.getByteFrequencyData(audio.data);
+    normalized = audio.data;
+  }
+
+  const totalBins = normalized.length || 1;
+  const bassEnd = Math.max(4, Math.floor(totalBins * 0.12));
+  const midEnd = Math.max(bassEnd + 1, Math.floor(totalBins * 0.42));
+
+  let bass = 0;
+  let mid = 0;
+  let treble = 0;
+
+  for (let i = 0; i < bassEnd; i++) {
+    bass += normalized[i];
+  }
+
+  for (let i = bassEnd; i < midEnd; i++) {
+    mid += normalized[i];
+  }
+
+  for (let i = midEnd; i < totalBins; i++) {
+    treble += normalized[i];
+  }
+
+  bass /= bassEnd;
+  mid /= Math.max(1, midEnd - bassEnd);
+  treble /= Math.max(1, totalBins - midEnd);
+
+  if (bass > 1 || mid > 1 || treble > 1) {
+    bass /= 255;
+    mid /= 255;
+    treble /= 255;
+  }
+
+  const energy = clamp((bass * 0.5) + (mid * 0.33) + (treble * 0.17), 0, 1);
+
+  audio.bass += (bass - audio.bass) * (1 - SETTINGS.audioSmoothing);
+  audio.mid += (mid - audio.mid) * (1 - SETTINGS.audioSmoothing);
+  audio.treble += (treble - audio.treble) * (1 - SETTINGS.audioSmoothing);
+  audio.level += (energy - audio.level) * (1 - SETTINGS.audioSmoothing);
+
+  const now = performance.now();
+  const beatReady = audio.bass > SETTINGS.audioBeatThreshold && (now - audio.lastBeatAt) > SETTINGS.audioBeatCooldownMs;
+
+  if (beatReady) {
+    audio.lastBeatAt = now;
+    audio.beat = 1;
+  } else {
+    audio.beat += (0 - audio.beat) * 0.1;
+  }
+}
+
+function setAudioData(audioArray) {
+  const audio = state.audio;
+
+  if (!audioArray || typeof audioArray.length !== "number" || audioArray.length === 0) {
+    audio.active = false;
+    return;
+  }
+
+  audio.data = audioArray;
+  audio.active = true;
+  audio.ready = true;
+}
+
+function startWallpaperEngineAudio() {
+  if (!state.audio.enabled || typeof window.wallpaperRegisterAudioListener !== "function") {
+    return false;
+  }
+
+  state.audio.mode = "wallpaper-engine";
+  state.audio.ready = true;
+  state.audio.active = true;
+
+  window.wallpaperRegisterAudioListener((audioArray) => {
+    setAudioData(audioArray);
+  });
+
+  return true;
+}
+
+function getAudioIntensity() {
+  return clamp(state.audio.level, 0, 1);
+}
+
+function getAudioBeatPulse() {
+  return clamp(state.audio.beat, 0, 1);
+}
+
+function getShapeLoss() {
+  const audio = state.audio;
+  return clamp((getAudioIntensity() * 0.7) + (audio.bass * 0.3), 0, 1);
+}
+
+async function startMicrophoneAudio() {
+  const audio = state.audio;
+
+  if (!audio.enabled || audio.active || audio.mode === "wallpaper-engine") {
+    return;
+  }
+
+  if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const context = new (window.AudioContext || window.webkitAudioContext)();
+    const source = context.createMediaStreamSource(stream);
+    const analyser = context.createAnalyser();
+
+    analyser.fftSize = SETTINGS.audioFftSize;
+    analyser.smoothingTimeConstant = 0.72;
+
+    source.connect(analyser);
+
+    audio.stream = stream;
+    audio.context = context;
+    audio.source = source;
+    audio.analyser = analyser;
+    audio.data = new Uint8Array(analyser.frequencyBinCount);
+    audio.mode = "microphone";
+    audio.active = true;
+    audio.ready = true;
+  } catch {
+    audio.enabled = false;
+    audio.active = false;
+  }
+}
+
+function requestAudioStartOnGesture() {
+  if (!SETTINGS.audioRequestOnFirstGesture || !state.audio.enabled || state.audio.mode === "wallpaper-engine") {
+    return;
+  }
+
+  const handler = () => {
+    void startMicrophoneAudio();
+    window.removeEventListener("pointerdown", handler, true);
+    window.removeEventListener("keydown", handler, true);
+  };
+
+  window.addEventListener("pointerdown", handler, true);
+  window.addEventListener("keydown", handler, true);
 }
 
 function morphParticles(targets) {
@@ -201,6 +405,7 @@ function buildTargets() {
 
 function animate() {
   const time = performance.now() * 0.001;
+  updateAudioMetrics();
   ctx.clearRect(0, 0, state.width, state.height);
   ctx.fillStyle = "rgba(3, 7, 14, 0.30)";
   ctx.fillRect(0, 0, state.width, state.height);
@@ -208,21 +413,48 @@ function animate() {
   const mouseRadius = 90;
   const mouseRadiusSq = mouseRadius * mouseRadius;
   const mouse = state.mouse;
+  const audioLevel = getAudioIntensity();
+  const audioBeat = getAudioBeatPulse();
+  const shapeLoss = easeOutCubic(getShapeLoss());
+  const jitterLimit = SETTINGS.audioMaxJitter * (0.28 + audioLevel * 0.92);
+  const cohesionLoss = SETTINGS.audioShapeLoss * shapeLoss;
 
   ctx.fillStyle = "#f4f7fb";
 
   for (let i = 0; i < state.particles.length; i++) {
     const p = state.particles[i];
 
-    let ax = (p.tx - p.x) * 0.018;
-    let ay = (p.ty - p.y) * 0.018;
+    const audioWarp = easeOutCubic(audioLevel * 0.7 + audioBeat * 0.3);
+    const deformStrength = jitterLimit * audioWarp;
+    const deformX = Math.sin(time * mix(6.2, 11.5, audioLevel) + i * 0.17 + p.y * 0.03) * deformStrength;
+    const deformY = Math.cos(time * mix(4.6, 9.5, audioLevel) + i * 0.13 + p.x * 0.02) * deformStrength * 0.72;
+    const targetX = p.tx + deformX;
+    const targetY = p.ty + deformY;
+
+    let ax = (targetX - p.x) * mix(0.018, 0.006, cohesionLoss);
+    let ay = (targetY - p.y) * mix(0.018, 0.006, cohesionLoss);
 
     if (!isAsciiTransitionActive()) {
       const windPhase = time * SETTINGS.windSpeed;
-      const swayX = Math.sin(windPhase + p.y * SETTINGS.windScale * 3.0) * SETTINGS.windStrength;
-      const swayY = Math.cos(windPhase * 0.75 + p.x * SETTINGS.windScale * 2.2) * SETTINGS.windStrength * 0.28;
+      const windBoost = 1 + audioLevel * 0.8;
+      const swayX = Math.sin(windPhase + p.y * SETTINGS.windScale * 3.0) * SETTINGS.windStrength * windBoost;
+      const swayY = Math.cos(windPhase * 0.75 + p.x * SETTINGS.windScale * 2.2) * SETTINGS.windStrength * 0.28 * windBoost;
       ax += swayX;
       ay += swayY;
+    }
+
+    if (audioLevel > 0.02 || audioBeat > 0.02) {
+      const noise = stableNoise3(i * 0.07, time * 1.4, p.x * 0.005 + p.y * 0.003);
+      const burst = (noise - 0.5) * 2 * jitterLimit * (0.18 + audioLevel * 0.82);
+      ax += burst * (0.55 + audioBeat * 0.8);
+      ay += -burst * (0.35 + audioLevel * 0.45);
+
+      const centerDx = p.x - state.width * 0.5;
+      const centerDy = p.y - state.height * 0.5;
+      const centerDistance = Math.max(1, Math.hypot(centerDx, centerDy));
+      const repel = (audioLevel + audioBeat * 0.7) * SETTINGS.audioRepelStrength;
+      ax += (centerDx / centerDistance) * repel;
+      ay += (centerDy / centerDistance) * repel;
     }
 
     if (mouse.active) {
@@ -238,13 +470,16 @@ function animate() {
       }
     }
 
-    p.vx = (p.vx + ax) * 0.86;
-    p.vy = (p.vy + ay) * 0.86;
+    const drag = mix(0.86, 0.78, audioLevel);
+    p.vx = (p.vx + ax) * drag;
+    p.vy = (p.vy + ay) * drag;
     p.x += p.vx;
     p.y += p.vy;
 
-    p.size += (p.targetSize - p.size) * 0.09;
-    p.alpha += (p.targetAlpha - p.alpha) * 0.06;
+    const sizeTarget = p.targetSize * mix(1, 1.22, audioLevel * 0.85 + audioBeat * 0.2);
+    const alphaTarget = p.targetAlpha * mix(1, 0.68, shapeLoss * 0.82);
+    p.size += (sizeTarget - p.size) * mix(0.09, 0.16, audioLevel);
+    p.alpha += (alphaTarget - p.alpha) * mix(0.06, 0.1, audioLevel);
 
     ctx.globalAlpha = p.alpha;
     ctx.fillRect(p.x - p.size * 0.5, p.y - p.size * 0.5, p.size, p.size);
@@ -493,6 +728,8 @@ window.addEventListener("resize", resizeCanvas);
 
 resizeCanvas();
 bootstrapAsciiSource();
+startWallpaperEngineAudio();
+requestAudioStartOnGesture();
 
 setInterval(() => {
   refreshAsciiList();
