@@ -170,11 +170,15 @@ Este projeto está disponível para uso livre.
 
 ## 💡 Próximas melhorias
 
-- [ ] Cache de targets para ASCIIs (menos recálculo)
-- [ ] Playlist sem repetição automática
 - [x] Efeito de vento suave fora das transições
 - [x] Sincronização com áudio
 - [ ] Manifest com duração customizada por arquivo
+- [ ] Configuração por arquivo no `asciis/index.json` (ex.: duração, escala, intensidade de áudio)
+- [ ] Presets de qualidade (`low`, `balanced`, `high`) para ajustar `maxParticles` automaticamente
+- [ ] Adaptação dinâmica de qualidade por FPS (reduzir partículas quando houver queda sustentada)
+- [ ] Modo de transição alternativo (dissolve, swirl, ripple)
+- [ ] Controle de paleta por arquivo ASCII (mapa de densidade customizável)
+- [ ] Suporte a fontes ASCII maiores com centralização inteligente por bounding box
 
 ## 👥 Contribuições
 
